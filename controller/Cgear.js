@@ -13,7 +13,7 @@ aws.config.update({
 
 const s3 = new aws.S3();
 const limits = {
-    fileSize: 5 * 1024 * 1024, //5mb
+    fileSize: 10 * 1024 * 1024, //5mb
 };
 var userid = 0;
 var gearid = 0;
@@ -34,7 +34,8 @@ const uploadSingle = multer({
                 const gearEdit = await gear.create({
                     gearTitle: req.body.gearTitle,
                     gearExplain: req.body.gearExplain,
-                    writer: req.body.writer,
+                    writer: decodeURI(req.body.writer),
+                    category: req.body.category,
                     thunmnail: fn,
                 });
                 gearid = gearEdit.gearid;
@@ -62,6 +63,66 @@ const uploadSingle = multer({
         fileSize: 5 * 1024 * 1024, // 5MB
     },
 });
+
+exports.reviewDel = async (req, res) => {
+    if (!req.cookies.isLogin) {
+        res.send({ errcode: -1, error: '삭제 권한이 없습니다.' });
+        return;
+    }
+    const loginuser = await User.findOne({
+        where: {
+            nickname: decodeURI(req.cookies.isLogin),
+        },
+    });
+    const owner = await gear.findOne({
+        where: {
+            gearid: req.body.gid,
+        },
+    });
+    if (!loginuser || !owner) {
+        res.send({ errcode: -1, error: '삭제 권한이 없습니다.' });
+        return;
+    }
+    if (loginuser.nickname == owner.writer) {
+        const imgurls = gear_img.findAll({
+            where: {
+                gearid: req.body.gid,
+            },
+        });
+        for (let i = 0; i < imgurls.length; i++) {
+            const tmpFileName = imgurls[i].split('/');
+            const params = {
+                Bucket: 'hwr-bucket',
+                Key: `/gear/${tmpFileName[tmpFileName.length - 1]}`,
+            };
+
+            try {
+                await s3.headObject(params).promise();
+                console.log('File Found in S3');
+                try {
+                    await s3.deleteObject(params).promise();
+                    console.log('file deleted Successfully');
+                } catch (err) {
+                    console.log('ERROR in file Deleting : ' + JSON.stringify(err));
+                }
+            } catch (err) {
+                console.log('File not Found ERROR : ' + err.code);
+            }
+        }
+
+        gear.destroy({
+            where: {
+                gearid: req.body.gid,
+            },
+        });
+        console.log('삭제');
+        res.send({ error: 'no error' });
+        return;
+    } else {
+        console.log('삭제실패, 아이디가 다름');
+        res.send({ error: '삭제 권한이 없습니다.' });
+    }
+};
 
 //멀티 업로드(사진들 업로드)
 const uploadMulti = multer({
@@ -97,7 +158,7 @@ exports.singleAxios = async (req, res) => {
     const files = uploadSingle.array('array_file');
     const user = await User.findOne({
         where: {
-            nickname: req.cookies.isLogin,
+            nickname: decodeURI(req.cookies.isLogin),
         },
     });
     userid = user.id;
@@ -168,7 +229,7 @@ exports.gearreviewPage = async (req, res) => {
         urlArray.urls.push(imgurl[i].imgurl);
     }
     console.log(urlArray);
-    res.render('gearreview', { gearTitle: result1.gearTitle, gearExplain: result1.gearExplain, writer: result1.writer, imgurl: urlArray });
+    res.render('gearreview', { gearTitle: result1.gearTitle, gearExplain: result1.gearExplain, writer: result1.writer, category: result1.category, imgurl: urlArray });
 };
 
 exports.gearreviewEdit = async (req, res) => {
@@ -177,7 +238,7 @@ exports.gearreviewEdit = async (req, res) => {
         res.send(`<script type="text/javascript">alert("로그인이 되어있지 않습니다."); window.location = document.referrer; </script>`);
         return;
     }
-    const nickname = req.cookies.isLogin;
+    const nickname = decodeURI(req.cookies.isLogin);
     //쿠키던 세션이던 저장되어있다고 생각하고 여기선 구현
     res.render('gearreviewedit', { nickname: nickname });
 };

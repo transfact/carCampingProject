@@ -1,4 +1,4 @@
-const { gallery, gallery_img, gallery_comment, User } = require('../models');
+const { gallery, gallery_img, gallery_comment, userLocation, User } = require('../models');
 //multer upload용
 const aws = require('aws-sdk');
 const multers3 = require('multer-s3');
@@ -22,6 +22,7 @@ const limits = {
 var userid = 0;
 var galleryid = 0;
 var first = 0;
+
 const uploadSingle = multer({
     storage: multers3({
         s3: s3,
@@ -33,20 +34,52 @@ const uploadSingle = multer({
         async key(req, file, cb) {
             //DB에도 저장해야함(경로)
             //여기서 폴더를 하나 만들었고, 폴더에 마음대로...저장해보시면됩니다.
-            console.log(req.body);
             if (first == 0 && typeof req.body.title == 'string') {
                 var dateNow = Date.now();
                 const fn = `gallery/${Date.now()}_${path.basename(file.originalname)}`;
-                const galleryEdit = await gallery.create({
-                    userid: userid,
-                    title: req.body.title,
-                    mainText: req.body.mainText,
-                    region: req.body.region,
-                    spotInform: req.body.spotInform,
-                    thunmnail: fn,
+                await userLocation.destroy({
+                    where: {
+                        galleryid: req.body.gid,
+                    },
                 });
-                galleryid = galleryEdit.galleryid;
-                console.log('galleryid', galleryid);
+                if (req.body.gid != -1) {
+                    console.log('사진넣고수정');
+                    await gallery_img.destroy({
+                        where: {
+                            galleryid: req.body.gid,
+                        },
+                    });
+                    console.log('현재 gid : ', req.body.gid);
+                    const galleryUpdate = await gallery.update(
+                        {
+                            userid: userid,
+                            title: req.body.title,
+                            mainText: req.body.mainText,
+                            region: req.body.region,
+                            spotInform: req.body.spotInform,
+                            galleryid: req.body.gid,
+                            thunmnail: fn,
+                        },
+                        {
+                            where: {
+                                galleryid: req.body.gid,
+                            },
+                        }
+                    );
+                    galleryid = req.body.gid;
+                } else {
+                    const galleryEdit = await gallery.create({
+                        userid: userid,
+                        title: req.body.title,
+                        mainText: req.body.mainText,
+                        region: req.body.region,
+                        spotInform: req.body.spotInform,
+                        thunmnail: fn,
+                    });
+                    galleryid = galleryEdit.galleryid;
+                }
+
+                console.log('galleryid1', galleryid);
 
                 gallery_img.create({
                     galleryid: galleryid,
@@ -62,7 +95,7 @@ const uploadSingle = multer({
                         imgurl: `https://hwr-bucket.s3.ap-northeast-2.amazonaws.com/gallery/${dateNow}_${path.basename(file.originalname)}`,
                     });
                     cb(null, `gallery/${dateNow}_${path.basename(file.originalname)}`); // original 폴더안에다 파일을 저장
-                }, 1000);
+                }, 50);
             }
         },
     }),
@@ -74,16 +107,18 @@ const uploadSingle = multer({
 //멀터 이용 싱글 테이블 만들기
 exports.singleAxios = async (req, res) => {
     const files = uploadSingle.array('array_file');
-    console.log(req.body);
+    console.log('decodeURL', decodeURI(req.cookies.isLogin));
     const user = await User.findOne({
         where: {
-            nickname: req.cookies.isLogin,
+            nickname: decodeURI(req.cookies.isLogin),
         },
     });
-    userid = user.id;
-    if (!userid) {
+    console.log(user);
+    if (!user) {
         res.send({ result: false, errMessage: '로그인이 종료되었거나, 잘못된 접근입니다.' });
+        return;
     }
+    userid = user.id;
     const result = files(req, res, function (err) {
         if (err instanceof multer.MulterError) {
             // A Multer error occurred when uploading.
@@ -95,13 +130,65 @@ exports.singleAxios = async (req, res) => {
             console.log(err);
             return;
         }
-        console.log(result);
-
+        console.log(galleryid);
         first = 0;
         return res.json({
             galleryid: galleryid,
         });
     });
+};
+
+exports.uploadWithoutMulter = async (req, res) => {
+    const { galleryid, title, mainText, region, spotInfo, mode } = req.body;
+    const thunmnail = '../static/ever2.jpeg';
+    console.log('decodeCookie', decodeURI(req.cookies.isLogin));
+    const user = await User.findOne({
+        where: {
+            nickname: decodeURI(req.cookies.isLogin),
+        },
+    });
+    console.log(user);
+    if (!user) {
+        res.send({ result: false, errMessage: '로그인이 종료되었거나, 잘못된 접근입니다.' });
+        return;
+    }
+    userid = user.id;
+
+    //uploadWithoutMulter몰라
+    if (mode == 1) {
+        console.log('mode1, multer X');
+        const galleryUpdate = await gallery.update(
+            {
+                userid: userid,
+                title: title,
+                mainText: mainText,
+                region: region,
+                spotInform: spotInfo,
+            },
+            {
+                where: {
+                    galleryid,
+                },
+            }
+        );
+        return res.json({
+            galleryid: galleryid,
+        });
+    } else {
+        //mode=0 create
+        console.log('mode0, multer X');
+        const galleryCreate = await gallery.create({
+            userid: userid,
+            title: title,
+            mainText: mainText,
+            region: region,
+            spotInform: spotInfo,
+            thunmnail: thunmnail,
+        });
+        return res.json({
+            galleryid: galleryCreate.galleryid,
+        });
+    }
 };
 
 exports.reviewPage = async (req, res) => {
@@ -120,10 +207,11 @@ exports.reviewPage = async (req, res) => {
         where: {
             galleryid: req.query.galleryId,
         },
-        include: gallery_comment,
+        include: [gallery_comment, userLocation],
         order: [
             [gallery_comment, 'commentGroup', 'asc'],
             [gallery_comment, 'createdAt', 'asc'],
+            [userLocation, 'order', 'asc'],
         ],
     });
     if (result1 == null) {
@@ -185,15 +273,13 @@ exports.reviewEdit = async (req, res) => {
     res.render('reviewedit');
 };
 exports.reviewDel = async (req, res) => {
-    console.log('del', req.cookies);
-
     if (!req.cookies.isLogin) {
         res.send({ errcode: -1, error: '삭제 권한이 없습니다.' });
         return;
     }
     const loginuser = await User.findOne({
         where: {
-            nickname: req.cookies.isLogin,
+            nickname: decodeURI(req.cookies.isLogin),
         },
     });
     const owner = await gallery.findOne({
@@ -201,6 +287,12 @@ exports.reviewDel = async (req, res) => {
             galleryid: req.body.gid,
         },
     });
+
+    if (loginuser.id != owner.userid) {
+        console.log(loginuser.id, owner.userid);
+        res.send({ errcode: -1, error: '아이디가 달라 삭제 권한이 없습니다.' });
+        return;
+    }
 
     if (loginuser.id == owner.userid) {
         const imgurls = gallery_img.findAll({
@@ -238,6 +330,7 @@ exports.reviewDel = async (req, res) => {
         res.send({ error: 'no error' });
         return;
     } else {
+        console.log(loginuser.id, owner.userid);
         console.log('삭제실패, 아이디가 다름');
         res.send({ error: '삭제 권한이 없습니다.' });
     }
@@ -247,7 +340,7 @@ exports.reviewChangeCheck = async (req, res) => {
     console.log('change', req.body);
     const loginuser = await User.findOne({
         where: {
-            nickname: req.cookies.isLogin,
+            nickname: decodeURI(req.cookies.isLogin),
         },
     });
     const owner = await gallery.findOne({
@@ -279,7 +372,7 @@ exports.addMainComment = async (req, res) => {
     }
     const loginuser = await User.findOne({
         where: {
-            nickname: req.cookies.isLogin,
+            nickname: decodeURI(req.cookies.isLogin),
         },
     });
     let maxGroup;
@@ -292,7 +385,7 @@ exports.addMainComment = async (req, res) => {
         maxGroup = 0;
     }
     await gallery_comment.create({
-        nickName: req.cookies.isLogin,
+        nickName: decodeURI(req.cookies.isLogin),
         commentText: req.body.maincomment,
         commentGroup: maxGroup,
         deepComment: 0,
@@ -310,12 +403,12 @@ exports.addSubComment = async (req, res) => {
     }
     const loginuser = await User.findOne({
         where: {
-            nickname: req.cookies.isLogin,
+            nickname: decodeURI(req.cookies.isLogin),
         },
     });
 
     await gallery_comment.create({
-        nickName: req.cookies.isLogin,
+        nickName: decodeURI(req.cookies.isLogin),
         commentText: req.body.subcomment,
         commentGroup: req.body.commentGroup,
         deepComment: -1,
@@ -337,3 +430,132 @@ exports.addSubComment = async (req, res) => {
     );
     res.json({ errcode: 0 });
 };
+
+exports.sendMapData = async (req, res) => {
+    //쿠키던 세션이던 검증 필요
+    if (!req.cookies.isLogin) {
+        res.send(`<script type="text/javascript">alert("로그인이 되어있지 않습니다."); window.location = document.referrer; </script>`);
+        return;
+    }
+    console.log('getMapData', req.body.markerObject);
+
+    await userLocation.bulkCreate(req.body.markerObject);
+
+    //쿠키던 세션이던 저장되어있다고 생각하고 여기선 구현
+    res.send('noerr');
+};
+exports.deleteComment = async (req, res) => {
+    if (!req.cookies.isLogin) {
+        res.send({ errcode: -1, error: '삭제 권한이 없습니다.' });
+        return;
+    }
+    const { main, subid } = req.body;
+    console.log(main, subid);
+
+    if (subid == -1) {
+        const owner = await gallery_comment.findOne({
+            where: {
+                commentid: main,
+            },
+        });
+
+        if (decodeURI(req.cookies.isLogin) == owner.nickName) {
+            console.log('아이디 같음!', decodeURI(req.cookies.isLogin), owner.nickName);
+        } else {
+            console.log('아이디 다름!', decodeURI(req.cookies.isLogin), owner.nickName);
+            res.send({ errcode: -1, error: '삭제 권한이 없습니다.' });
+            return;
+        }
+    } else {
+        const owner = await gallery_comment.findOne({
+            where: {
+                commentid: subid,
+            },
+        });
+
+        if (decodeURI(req.cookies.isLogin) == owner.nickName) {
+            console.log('아이디 같음!', decodeURI(req.cookies.isLogin), owner.nickName);
+        } else {
+            console.log('아이디 다름!', decodeURI(req.cookies.isLogin), owner.nickName);
+            res.send({ errcode: -1, error: '삭제 권한이 없습니다.' });
+            return;
+        }
+    }
+
+    if (subid != -1) {
+        await gallery_comment.destroy({
+            where: {
+                commentid: subid,
+            },
+        });
+        await gallery_comment.increment(
+            { deepComment: -1 },
+            {
+                where: {
+                    commentid: main,
+                },
+            }
+        );
+        res.send({ errcode: 0, error: '에러 없음' });
+    } else {
+        await gallery_comment.update(
+            {
+                commentText: '삭제되었습니다.',
+            },
+            {
+                where: {
+                    commentid: main,
+                },
+            }
+        );
+        res.send({ errcode: 0, error: '에러 없음' });
+    }
+};
+
+const uploadUpdate = multer({
+    storage: multers3({
+        s3: s3,
+        bucket: 'hwr-bucket',
+        acl: 'public-read',
+        metadata: function (req, file, cb) {
+            cb(null, { fieldName: file.fieldname });
+        },
+        async key(req, file, cb) {
+            //DB에도 저장해야함(경로)
+            //여기서 폴더를 하나 만들었고, 폴더에 마음대로...저장해보시면됩니다.
+            if (first == 0 && typeof req.body.title == 'string') {
+                var dateNow = Date.now();
+                const fn = `gallery/${Date.now()}_${path.basename(file.originalname)}`;
+                const galleryEdit = await gallery.update({
+                    userid: userid,
+                    title: req.body.title,
+                    mainText: req.body.mainText,
+                    region: req.body.region,
+                    spotInform: req.body.spotInform,
+                    thunmnail: fn,
+                });
+                galleryid = galleryEdit.galleryid;
+                console.log('galleryid2', galleryid);
+
+                gallery_img.create({
+                    galleryid: galleryid,
+                    imgurl: `https://hwr-bucket.s3.ap-northeast-2.amazonaws.com/gallery/${dateNow}_${path.basename(file.originalname)}`,
+                });
+                first += 1;
+                cb(null, fn); // original 폴더안에다 파일을 저장
+            } else {
+                setTimeout(() => {
+                    var dateNow = Date.now();
+                    gallery_img.create({
+                        galleryid: galleryid,
+                        imgurl: `https://hwr-bucket.s3.ap-northeast-2.amazonaws.com/gallery/${dateNow}_${path.basename(file.originalname)}`,
+                    });
+                    cb(null, `gallery/${dateNow}_${path.basename(file.originalname)}`); // original 폴더안에다 파일을 저장
+                }, 50);
+            }
+        },
+    }),
+    limits: {
+        fileSize: 5 * 1024 * 1024, //5mb
+    },
+});

@@ -1,11 +1,9 @@
 const { gallery, gallery_img, gallery_comment, userLocation, User, gear } = require('../models');
 const bcrypt = require('bcrypt');
-
 const axios = require('axios');
 
 const REDIRECT_URI = 'http://localhost:8000/user/oauth/kakao'; //본인의 리다이렉트 url입력 후 라우트에서도 설정하세요
 const REST_API_KEY = 'd09187c9ea730ee149f8d9292abffcf9'; //본인 rest api키 입력하시면 됩니다.
-
 // //cookie옵션개체
 const cookieConfig = {
     //httpOnly 웹서버를 통해서만 쿠키에 접근 가능 (document.cookie 불가)
@@ -61,6 +59,7 @@ exports.auth_kakao = async (req, res) => {
     }
 };
 
+exports.getToken = async (req, res) => { };
 
 //로그인
 exports.login = (req, res) => {
@@ -113,7 +112,7 @@ exports.postToken = async (req, res) => {
         res.cookie('isLogin', encodeURI(nickname), cookieConfig);
         res.cookie('isTrash', 'adfasdfsdfsdfdsfdsfadfasdfs', trashCookie);
         res.json({
-            result: true
+            result: true,
         });
     } else {
         //사용자 추가정보 입력요구(회원가입 페이지)
@@ -242,7 +241,6 @@ exports.logoutMiddlePost = async (req, res) => {
             result: true,
         });
     } else {
-
         const result = await axios({
             method: 'POST',
             url: url,
@@ -265,7 +263,6 @@ exports.logoutMiddlePost = async (req, res) => {
         }
     }
 };
-
 
 //회원탈퇴 get
 exports.deleteUser = (req, res) => {
@@ -304,7 +301,6 @@ exports.deleteUserPost = async (req, res) => {
             });
         });
     } else {
-
         const result = await axios({
             method: 'POST',
             url: 'https://kapi.kakao.com/v1/user/unlink',
@@ -385,9 +381,10 @@ exports.checkpwvalid = async (req, res) => {
     }
     console.log(result.pw);
     const compare = comparePassword(req.body.pw, result.pw);
-    console.log('compare', compare);
+
     if (compare) {
-        res.send({ result: true });
+        console.log('comparetrue', compare);
+        res.json({ result: true });
         return;
     } else {
         res.json({ result: false });
@@ -448,7 +445,6 @@ const comparePassword = (password, dbPassword) => {
     return bcrypt.compareSync(password, dbPassword);
 };
 
-
 //마이페이지 수정(닉네임 -> 카카오 로그인일때는 수정불가)
 exports.mypagePatch = async (req, res) => {
     const { patchnickname, id } = req.body;
@@ -474,4 +470,27 @@ exports.mypagePatch = async (req, res) => {
             message: '수정을 실패했습니다',
         });
     }
+};
+
+exports.changeUserInfo = (req, res) => {
+    res.render('changeuserinfo');
+};
+
+exports.changeUserInfo2 = async (req, res) => {
+    console.log(req.body);
+    await User.update(
+        {
+            nickname: req.body.nickname,
+            levelc: req.body.level,
+            ownc: req.body.own,
+        },
+        {
+            where: {
+                nickname: req.cookies.isLogin,
+            },
+        }
+    );
+    res.clearCookie('isLogin');
+    res.cookie('isLogin', encodeURI(req.body.nickname), cookieConfig);
+    res.json({ data: 'true' });
 };
